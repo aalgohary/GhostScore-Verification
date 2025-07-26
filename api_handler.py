@@ -70,31 +70,49 @@ def get_ohlcv_data(ticker, source="alpha_vantage"):
 
 def calculate_52weekhigh(ticker):
     """Calculate 52-week high percentage with caching"""
-    weekly_data = get_alpha_vantage_data(ticker, function="TIME_SERIES_WEEKLY")
-    if not weekly_data:
-        return None
-        
-    weekly_series = weekly_data.get("Weekly Time Series", {})
-    if not weekly_series:
-        return None
-        
     try:
-        weekly_highs = [float(v["2. high"]) for v in weekly_series.values()]
-        fifty_two_week_high = max(weekly_highs[:52])
+        # Get weekly data with full output size to ensure we have enough data points
+        weekly_data = get_alpha_vantage_data(ticker, function="TIME_SERIES_WEEKLY", outputsize="full")
+        if not weekly_data:
+            return None
+            
+        weekly_series = weekly_data.get("Weekly Time Series", {})
+        if not weekly_series:
+            return None
+            
+        # Convert to sorted list of (date, values) tuples
+        sorted_weekly = sorted(
+            [(date, float(values["2. high"])) for date, values in weekly_series.items()],
+            key=lambda x: x[0],
+            reverse=True
+        )
         
+        # Ensure we have at least 52 weeks of data
+        if len(sorted_weekly) < 52:
+            return None
+            
+        # Get the highest high from last 52 weeks
+        fifty_two_week_high = max([high for date, high in sorted_weekly[:52]])
+        
+        # Get current close from daily data
         daily_data = get_alpha_vantage_data(ticker)
         if not daily_data:
             return None
             
         time_series = daily_data.get("Time Series (Daily)", {})
+        if not time_series:
+            return None
+            
         latest_date = next(iter(time_series))
         current_close = float(time_series[latest_date]["4. close"])
         
+        # Calculate percentage difference
         return ((current_close - fifty_two_week_high) / fifty_two_week_high) * 100
+        
     except Exception as e:
         print(f"Error calculating 52-week high for {ticker}: {str(e)}")
         return None
-    
+
 def get_technical_indicators(ticker, source="alpha_vantage"):
     """Fetch all technical indicators with exact quarterly and indicator calculations"""
     indicators = {}
@@ -113,21 +131,19 @@ def get_technical_indicators(ticker, source="alpha_vantage"):
             raise ValueError("Empty time series data")
         
         # Convert to sorted list of (date, values) pairs
-        sorted_daily = sorted(time_series.items(), reverse=True)
+        sorted_daily = sorted(time_series.items(), key=lambda x: x[0], reverse=True)
         
         # 2. Add historical close prices (up to 24 days back)
-        close_lookbacks = {
-            f"Close-{i}": None for i in range(25)  # 0-24
-        }
+        close_lookbacks = {f"Close-{i}": None for i in range(25)}
         close_lookbacks.pop("Close-0")  # We already have current close
         
         for i in range(1, 25):
             if i < len(sorted_daily):
-                close_lookbacks[f"Close-{i}"] = float(sorted_daily[i]["4. close"])
+                close_lookbacks[f"Close-{i}"] = float(sorted_daily[i][1]["4. close"])
         
         indicators.update(close_lookbacks)
         
-        # Get 52-week high first
+        # Get 52-week high
         indicators["52weekhigh"] = calculate_52weekhigh(ticker)
         
         # MACD Calculations
@@ -135,21 +151,23 @@ def get_technical_indicators(ticker, source="alpha_vantage"):
         for timeframe in ["daily", "weekly", "monthly"]:
             data = get_alpha_vantage_data(
                 ticker,
-                function="MACDEXT",
+                function="MACD",
                 interval=timeframe,
                 series_type="close",
                 fastperiod=12,
                 slowperiod=26,
                 signalperiod=9,
-                fastmatype=1,
-                slowmatype=1,
-                signalmatype=1
+                fastmatype=1,  # SMA
+                slowmatype=1,  # SMA
+                signalmatype=1  # SMA
             )
             
             if not data:
                 continue
                 
-            tech_data = data.get("Technical Analysis: MACDEXT", {})
+            # The response key varies slightly by timeframe
+            tech_key = f"Technical Analysis: MACDEXT"
+            tech_data = data.get(tech_key, {})
             if not tech_data:
                 continue
                 
@@ -157,26 +175,37 @@ def get_technical_indicators(ticker, source="alpha_vantage"):
             if timeframe == "monthly":
                 monthly_points = []
                 for date, values in list(tech_data.items())[:3]:  # Last 3 months
-                    monthly_points.append({
-                        "macd": float(values["MACD"]),
-                        "signal": float(values["MACD_Signal"])
-                    })
-                macd_data["monthly_points"] = monthly_points
+                    try:
+                        monthly_points.append({
+                            "macd": float(values["MACD"]),
+                            "signal": float(values["MACD_Signal"])
+                        })
+                    except (KeyError, ValueError):
+                        continue
+                
+                if monthly_points:
+                    macd_data["monthly_points"] = monthly_points
             
+            # Get the latest data point
+            if not tech_data:
+                continue
+                
             latest_date = next(iter(tech_data))
             prefix = timeframe.capitalize()
             
-            macd_value = float(tech_data[latest_date]["MACD"])
-            signal_value = float(tech_data[latest_date]["MACD_Signal"])
-            
-            indicators.update({
-                f"macd{prefix}": macd_value,
-                f"macdSignal{prefix}": signal_value,
-                # Strict 1 or 0 based on exact comparison
-                f"macdIndicator{prefix}": 1 if macd_value > signal_value else 0
-            })
+            try:
+                macd_value = float(tech_data[latest_date]["MACD"])
+                signal_value = float(tech_data[latest_date]["MACD_Signal"])
+                
+                indicators.update({
+                    f"macd{prefix}": macd_value,
+                    f"macdSignal{prefix}": signal_value,
+                    f"macdIndicator{prefix}": 1 if macd_value > signal_value else 0
+                })
+            except (KeyError, ValueError):
+                continue
         
-        # Calculate quarterly from last 3 months (changed from weekly+monthly average)
+        # Calculate quarterly from last 3 months
         if "monthly_points" in macd_data and len(macd_data["monthly_points"]) >= 3:
             last_3_months = macd_data["monthly_points"][:3]
             quarterly_macd = sum(p["macd"] for p in last_3_months) / 3
@@ -185,7 +214,6 @@ def get_technical_indicators(ticker, source="alpha_vantage"):
             indicators.update({
                 "macdQuarterly": quarterly_macd,
                 "macdSignalQuarterly": quarterly_signal,
-                # Strict 1 or 0 comparison
                 "macdIndicatorQuarterly": 1 if quarterly_macd > quarterly_signal else 0
             })
         
@@ -196,18 +224,14 @@ def get_technical_indicators(ticker, source="alpha_vantage"):
             indicators.get("macdIndicatorMonthly"),
             indicators.get("macdIndicatorQuarterly")
         ]
-        indicators["macdCount"] = sum(1 for i in macd_indicators if i == 1)
-        indicators["macdTotal"] = sum(i for i in macd_indicators if i is not None)
+        
+        # Count only valid indicators (not None)
+        valid_indicators = [i for i in macd_indicators if i is not None]
+        indicators["macdCount"] = sum(1 for i in valid_indicators if i == 1)
+        indicators["macdTotal"] = len(valid_indicators)
         
         return indicators
         
     except Exception as e:
         print(f"Error in get_technical_indicators for {ticker}: {str(e)}")
-        return {key: None for key in [
-            "52weekhigh",
-            "macdDaily", "macdSignalDaily", "macdIndicatorDaily",
-            "macdWeekly", "macdSignalWeekly", "macdIndicatorWeekly",
-            "macdMonthly", "macdSignalMonthly", "macdIndicatorMonthly",
-            "macdQuarterly", "macdSignalQuarterly", "macdIndicatorQuarterly",
-            "macdTotal", "macdCount"
-        ]}
+        return indicators  # Return whatever we have so far
