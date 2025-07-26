@@ -1,0 +1,6 @@
+ghost_verification/
+├── main_app.py          # Main Streamlit application
+├── api_handler.py       # API handling functions
+├── config.py            # API keys and configurations
+├── tickers.py           # List of supported tickers
+└── requirements.txt     # Dependencies
