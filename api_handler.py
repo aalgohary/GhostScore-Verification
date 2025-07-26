@@ -114,7 +114,67 @@ def calculate_52weekhigh(ticker):
     except Exception as e:
         print(f"Error calculating 52-week high for {ticker}: {str(e)}")
         return None
+
+def get_aroon_indicators(ticker, time_period=14):
+    """Fetch Aroon Up and Aroon Down values"""
+    aroon_data = get_alpha_vantage_data(
+        ticker,
+        function="AROON",
+        interval="daily",
+        time_period=time_period
+    )
     
+    if not aroon_data or "Technical Analysis: AROON" not in aroon_data:
+        return {"aroonUp": None, "aroonDown": None}
+    
+    tech_data = aroon_data["Technical Analysis: AROON"]
+    latest_date = next(iter(tech_data))
+    
+    return {
+        "aroonUp": float(tech_data[latest_date]["Aroon Up"]),
+        "aroonDown": float(tech_data[latest_date]["Aroon Down"])
+    }
+
+def get_mfa_indicator(ticker, time_period=14):
+    """Fetch MFI value"""
+    mfi_data = get_alpha_vantage_data(
+        ticker,
+        function="MFI",
+        interval="daily",
+        time_period=time_period
+    )
+    
+    if not mfi_data or "Technical Analysis: MFI" not in mfi_data:
+        return {"MFI": None}
+    
+    tech_data = mfi_data["Technical Analysis: MFI"]
+    latest_date = next(iter(tech_data))
+    
+    return {
+        "mfi14": float(tech_data[latest_date]["MFI"])
+    }
+
+def get_rsi_indicators(ticker, time_period=14):
+    """Fetch RSI value"""
+    rsi_values = {}
+    for timeframe in ["daily", "weekly", "monthly"]:
+        rsi_data = get_alpha_vantage_data(
+            ticker,
+            function="RSI",
+            interval=timeframe,
+            time_period=time_period,
+            series_type="close"
+        )
+        timeframe = 14 if timeframe == "daily" else timeframe.capitalize()
+        if not rsi_data or "Technical Analysis: RSI" not in rsi_data:
+            return {"RSI": None}
+        
+        if rsi_data and "Technical Analysis: RSI" in rsi_data:
+            latest_date = next(iter(rsi_data["Technical Analysis: RSI"]))
+            rsi_values[f"rsi{timeframe}"] = float(rsi_data["Technical Analysis: RSI"][latest_date]["RSI"])
+    
+    return rsi_values
+   
 def get_technical_indicators(ticker, source="alpha_vantage"):
     """Fetch all technical indicators with exact quarterly and indicator calculations"""
     indicators = {}
@@ -151,6 +211,18 @@ def get_technical_indicators(ticker, source="alpha_vantage"):
         
         # 4. Get 52-week high
         indicators["52weekhigh"] = calculate_52weekhigh(ticker)
+        
+        # 5. Get Aroon indicators
+        aroon_indicators = get_aroon_indicators(ticker)
+        indicators.update(aroon_indicators)
+        
+        # 6. Get MFI indicator
+        mfi_indicator = get_mfa_indicator(ticker)
+        indicators.update(mfi_indicator)
+        
+        # 7. Get RSI indicator
+        rsi_indicators = get_rsi_indicators(ticker)
+        indicators.update(rsi_indicators)
         
         # MACD Calculations
         macd_data = {}
