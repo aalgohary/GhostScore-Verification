@@ -19,7 +19,6 @@ def main():
     st.caption("Compare technical indicator values between verification system and GhostScore Platform")
     
     # --- GhostScore Data Input (Required First Step) ---
-    st.sidebar.header("GhostScore Data Input")
     ghost_score_json = st.sidebar.text_area(
         "Paste GhostScore JSON (Required)",
         height=400,
@@ -51,7 +50,6 @@ def main():
         ticker_data = ghost_score_data[selected_ticker]
         
         # --- Verification Configuration ---
-        st.sidebar.header("Verification Configuration")
         api_source = st.sidebar.selectbox(
             "Data Source for Verification",
             ["alpha_vantage"],
@@ -113,22 +111,40 @@ def main():
             
             comparison_df["Difference"] = comparison_df.apply(highlight_diff, axis=1)
             
-            # --- Display Results ---
+            # --- Display Results with DataFrame Filters ---
+            st.subheader("🔍 Filter and Compare Results")
+            
+            # Create expandable filter controls above the dataframes
+            with st.expander("🔎 Filter Options", expanded=True):
+                indicator_filter = st.multiselect(
+                    "Filter by indicator:",
+                    options=comparison_df["Indicator"].unique(),
+                    default=comparison_df["Indicator"].unique(),
+                    help="Select which indicators to display"
+                )
+            
+            # Apply filters
+            filtered_df = comparison_df.copy()
+            
+            if indicator_filter:
+                filtered_df = filtered_df[filtered_df["Indicator"].isin(indicator_filter)]
+            
+            # Display filtered data in columns
             col1, col2 = st.columns(2)
             
             with col1:
-                st.subheader(f"🔍 Verification Data")
+                st.subheader("Verification Data")
                 st.dataframe(
-                    df_base,
+                    filtered_df[["Indicator", "Verification App"]],
                     height=700,
                     use_container_width=True,
                     hide_index=True
                 )
             
             with col2:
-                st.subheader("📱 GhostScore Data")
+                st.subheader("GhostScore Data")
                 st.dataframe(
-                    df_comp,
+                    filtered_df[["Indicator", "GhostScore Platform"]],
                     height=700,
                     use_container_width=True,
                     hide_index=True
@@ -137,11 +153,11 @@ def main():
             # --- Differences Analysis ---
             st.subheader("🔎 Differences Analysis")
             
-            # Metrics
-            diff_stats = comparison_df["Difference"].value_counts().to_dict()
+            # Metrics (based on filtered data)
+            diff_stats = filtered_df["Difference"].value_counts().to_dict()
             
             cols = st.columns(4)
-            cols[0].metric("Total Indicators", len(comparison_df))
+            cols[0].metric("Total Indicators", len(filtered_df))
             cols[1].metric("Matching Indicators", 
                           diff_stats.get("✅ Within 1%", 0) + 
                           diff_stats.get("✅ Match", 0))
@@ -152,9 +168,9 @@ def main():
                          diff_stats.get("🔴 Missing in Verification", 0) + 
                          diff_stats.get("🔵 Missing in GhostScore", 0))
             
-            # Detailed differences
+            # Detailed differences (filtered)
             st.dataframe(
-                comparison_df,
+                filtered_df,
                 height=500,
                 use_container_width=True,
                 hide_index=True,
@@ -168,9 +184,9 @@ def main():
             
             # --- Download Options ---
             st.download_button(
-                label="📥 Download Full Comparison (CSV)",
-                data=comparison_df.to_csv(index=False).encode('utf-8'),
-                file_name=f"{selected_ticker}_comparison.csv",
+                label="📥 Download Filtered Comparison (CSV)",
+                data=filtered_df.to_csv(index=False).encode('utf-8'),
+                file_name=f"{selected_ticker}_filtered_comparison.csv",
                 mime='text/csv'
             )
     

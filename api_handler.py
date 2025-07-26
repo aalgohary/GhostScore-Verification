@@ -27,7 +27,6 @@ def get_alpha_vantage_data(ticker, function="TIME_SERIES_DAILY", **params):
         "function": function,
         "symbol": ticker,
         "datatype": "json",
-        "outputsize": "compact",
         "apikey": ALPHA_VANTAGE_API_KEY_PREMIUM
     }
     base_params.update(params)
@@ -39,6 +38,27 @@ def get_alpha_vantage_data(ticker, function="TIME_SERIES_DAILY", **params):
     except requests.exceptions.RequestException as e:
         print(f"Error fetching {function} for {ticker}: {str(e)}")
         return None
+
+def get_moving_averages(ticker):
+    """Fetch SMA and EMA values for 15, 45, and 50-day periods"""
+    ma_values = {}
+    periods = [15, 45, 50]
+    
+    for period in periods:
+        # Get SMA
+        sma_data = get_alpha_vantage_data(
+            ticker,
+            function="SMA",
+            interval="daily",
+            time_period=period,
+            series_type="close"
+        )
+        
+        if sma_data and "Technical Analysis: SMA" in sma_data:
+            latest_date = next(iter(sma_data["Technical Analysis: SMA"]))
+            ma_values[f"ma{period}"] = float(sma_data["Technical Analysis: SMA"][latest_date]["SMA"])
+    
+    return ma_values
 
 def get_ohlcv_data(ticker, source="alpha_vantage"):
     """Fetch OHLCV data with improved error handling"""
@@ -70,49 +90,31 @@ def get_ohlcv_data(ticker, source="alpha_vantage"):
 
 def calculate_52weekhigh(ticker):
     """Calculate 52-week high percentage with caching"""
+    weekly_data = get_alpha_vantage_data(ticker, function="TIME_SERIES_WEEKLY")
+    if not weekly_data:
+        return None
+        
+    weekly_series = weekly_data.get("Weekly Time Series", {})
+    if not weekly_series:
+        return None
+        
     try:
-        # Get weekly data with full output size to ensure we have enough data points
-        weekly_data = get_alpha_vantage_data(ticker, function="TIME_SERIES_WEEKLY", outputsize="full")
-        if not weekly_data:
-            return None
-            
-        weekly_series = weekly_data.get("Weekly Time Series", {})
-        if not weekly_series:
-            return None
-            
-        # Convert to sorted list of (date, values) tuples
-        sorted_weekly = sorted(
-            [(date, float(values["2. high"])) for date, values in weekly_series.items()],
-            key=lambda x: x[0],
-            reverse=True
-        )
+        weekly_highs = [float(v["2. high"]) for v in weekly_series.values()]
+        fifty_two_week_high = max(weekly_highs[:52])
         
-        # Ensure we have at least 52 weeks of data
-        if len(sorted_weekly) < 52:
-            return None
-            
-        # Get the highest high from last 52 weeks
-        fifty_two_week_high = max([high for date, high in sorted_weekly[:52]])
-        
-        # Get current close from daily data
         daily_data = get_alpha_vantage_data(ticker)
         if not daily_data:
             return None
             
         time_series = daily_data.get("Time Series (Daily)", {})
-        if not time_series:
-            return None
-            
         latest_date = next(iter(time_series))
         current_close = float(time_series[latest_date]["4. close"])
         
-        # Calculate percentage difference
         return ((current_close - fifty_two_week_high) / fifty_two_week_high) * 100
-        
     except Exception as e:
         print(f"Error calculating 52-week high for {ticker}: {str(e)}")
         return None
-
+    
 def get_technical_indicators(ticker, source="alpha_vantage"):
     """Fetch all technical indicators with exact quarterly and indicator calculations"""
     indicators = {}
@@ -143,7 +145,11 @@ def get_technical_indicators(ticker, source="alpha_vantage"):
         
         indicators.update(close_lookbacks)
         
-        # Get 52-week high
+        # 3. Get moving averages (SMA and EMA)
+        moving_averages = get_moving_averages(ticker)
+        indicators.update(moving_averages)
+        
+        # 4. Get 52-week high
         indicators["52weekhigh"] = calculate_52weekhigh(ticker)
         
         # MACD Calculations
@@ -157,34 +163,33 @@ def get_technical_indicators(ticker, source="alpha_vantage"):
                 fastperiod=12,
                 slowperiod=26,
                 signalperiod=9,
-                fastmatype=1,  # EMA
-                slowmatype=1,  # EMA
-                signalmatype=1  # EMA
+                fastmatype=1,
+                slowmatype=1,
+                signalmatype=1
             )
             
             if not data:
                 continue
                 
-            # The response key varies slightly by timeframe
             tech_key = f"Technical Analysis: MACDEXT"
             tech_data = data.get(tech_key, {})
             if not tech_data:
                 continue
                 
-            # Store all weekly data points for quarterly calculation
-            if timeframe == "weekly":
-                weekly_points = []
-                for date, values in list(tech_data.items())[:12]:  # Last 12 weeks
+            # Store all monthly data points for quarterly calculation
+            if timeframe == "monthly":
+                monthly_points = []
+                for date, values in list(tech_data.items())[:3]:  # Last 3 months
                     try:
-                        weekly_points.append({
+                        monthly_points.append({
                             "macd": float(values["MACD"]),
                             "signal": float(values["MACD_Signal"])
                         })
                     except (KeyError, ValueError):
                         continue
                 
-                if weekly_points:
-                    macd_data["weekly_points"] = weekly_points
+                if monthly_points:
+                    macd_data["monthly_points"] = monthly_points
             
             # Get the latest data point
             if not tech_data:
@@ -205,11 +210,11 @@ def get_technical_indicators(ticker, source="alpha_vantage"):
             except (KeyError, ValueError):
                 continue
         
-        # Calculate quarterly from last 12 weeks
-        if "weekly_points" in macd_data and len(macd_data["weekly_points"]) >= 12:
-            last_12_weeks = macd_data["weekly_points"][:12]
-            quarterly_macd = sum(p["macd"] for p in last_12_weeks) / 12
-            quarterly_signal = sum(p["signal"] for p in last_12_weeks) / 12
+        # Calculate quarterly from last 3 months
+        if "monthly_points" in macd_data and len(macd_data["monthly_points"]) >= 3:
+            last_3_months = macd_data["monthly_points"][:3]
+            quarterly_macd = sum(p["macd"] for p in last_3_months) / 3
+            quarterly_signal = sum(p["signal"] for p in last_3_months) / 3
             
             indicators.update({
                 "macdQuarterly": quarterly_macd,
