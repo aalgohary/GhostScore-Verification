@@ -171,20 +171,20 @@ def get_technical_indicators(ticker, source="alpha_vantage"):
             if not tech_data:
                 continue
                 
-            # Store all monthly data points for quarterly calculation
-            if timeframe == "monthly":
-                monthly_points = []
-                for date, values in list(tech_data.items())[:3]:  # Last 3 months
+            # Store all weekly data points for quarterly calculation
+            if timeframe == "weekly":
+                weekly_points = []
+                for date, values in list(tech_data.items())[:12]:  # Last 12 weeks
                     try:
-                        monthly_points.append({
+                        weekly_points.append({
                             "macd": float(values["MACD"]),
                             "signal": float(values["MACD_Signal"])
                         })
                     except (KeyError, ValueError):
                         continue
                 
-                if monthly_points:
-                    macd_data["monthly_points"] = monthly_points
+                if weekly_points:
+                    macd_data["weekly_points"] = weekly_points
             
             # Get the latest data point
             if not tech_data:
@@ -205,11 +205,11 @@ def get_technical_indicators(ticker, source="alpha_vantage"):
             except (KeyError, ValueError):
                 continue
         
-        # Calculate quarterly from last 3 months
-        if "monthly_points" in macd_data and len(macd_data["monthly_points"]) >= 3:
-            last_3_months = macd_data["monthly_points"][:3]
-            quarterly_macd = sum(p["macd"] for p in last_3_months) / 3
-            quarterly_signal = sum(p["signal"] for p in last_3_months) / 3
+        # Calculate quarterly from last 12 weeks
+        if "weekly_points" in macd_data and len(macd_data["weekly_points"]) >= 12:
+            last_12_weeks = macd_data["weekly_points"][:12]
+            quarterly_macd = sum(p["macd"] for p in last_12_weeks) / 12
+            quarterly_signal = sum(p["signal"] for p in last_12_weeks) / 12
             
             indicators.update({
                 "macdQuarterly": quarterly_macd,
