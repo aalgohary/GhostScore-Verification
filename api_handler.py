@@ -151,15 +151,15 @@ def get_technical_indicators(ticker, source="alpha_vantage"):
         for timeframe in ["daily", "weekly", "monthly"]:
             data = get_alpha_vantage_data(
                 ticker,
-                function="MACD",
+                function="MACDEXT",
                 interval=timeframe,
                 series_type="close",
                 fastperiod=12,
                 slowperiod=26,
                 signalperiod=9,
-                fastmatype=1,  # SMA
-                slowmatype=1,  # SMA
-                signalmatype=1  # SMA
+                fastmatype=1,  # EMA
+                slowmatype=1,  # EMA
+                signalmatype=1  # EMA
             )
             
             if not data:
